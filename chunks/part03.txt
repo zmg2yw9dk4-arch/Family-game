@@ -1,0 +1,125 @@
+ier telefoons in dezelfde kamer.</div>
+ <div class="mobileMode"><div class="mobileModeTitle">📱 Tot 4 telefoons · online co-op</div><div class="small">Iedere speler gebruikt zijn eigen telefoon. Bij binnenkomst vul je je naam in en kies je Kaylee, Gerard, Ailin of Louis.</div><div class="mobileActions"><button class="secondaryBtn primary" id="mobileHostBtn">Kamer maken</button><button class="secondaryBtn" id="mobileJoinBtn">Meedoen met code</button></div><button class="secondaryBtn" style="width:100%;margin-top:10px" id="installBtn">⬇︎ Installeer Familie Quest</button><div class="networkNote">Maximaal 4 spelers tegelijk. Elk character kan maar één keer gekozen worden. Beide telefoons openen dezelfde HTTPS-versie.</div></div>
+ <div class="controls">${controlSets.map((c,i)=>`<div class="card"><strong>Speler ${i+1}</strong><div class="small">Links / rechts / actie</div><div style="margin-top:8px">${c.label.split(' / ').map(x=>`<span class="key">${x}</span>`).join('')}</div><div class="small" style="margin-top:8px">Druk één keer op je springtoets om mee te doen. Daarna kies je met links/rechts.</div></div>`).join('')}</div>
+ <div id="selectors"></div><button class="go" id="startBtn">Start avontuur</button><div class="hint">Kies na deelnemen met links/rechts • bezet character = automatisch ruilen • Enter = starten • P = pauze • R = opnieuw</div>`;
+ panel.querySelector('#startBtn').onclick=startGame;
+ panel.querySelector('#mobileHostBtn').onclick=()=>openMobileLobby('host');
+ panel.querySelector('#mobileJoinBtn').onclick=()=>openMobileLobby('guest');
+ panel.querySelector('#installBtn').onclick=installPWA;
+ updateInstallButton();
+ panel.querySelector('#selectors').onclick=(e)=>{const b=e.target.closest('.charMini');if(!b)return;chooseCharacter(Number(b.dataset.slot),Number(b.dataset.char));};
+ renderSelectors();
+}
+
+
+let deferredInstallPrompt=null;
+const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone=()=>window.matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;updateInstallButton()});
+addEventListener('appinstalled',()=>{deferredInstallPrompt=null;showToast('Familie Quest is geïnstalleerd ✓');updateInstallButton()});
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+ addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+function updateInstallButton(){const b=document.getElementById('installBtn');if(!b)return;if(isStandalone()){b.textContent='✓ Familie Quest is geïnstalleerd';b.disabled=true}else if(isIOS){b.textContent='＋ Zet op beginscherm';b.disabled=false}else if(deferredInstallPrompt){b.textContent='⬇︎ Installeer Familie Quest';b.disabled=false}else{b.textContent='＋ Installeren / beginscherm';b.disabled=false}}
+async function installPWA(){if(isStandalone())return;if(deferredInstallPrompt){deferredInstallPrompt.prompt();try{await deferredInstallPrompt.userChoice}catch{}deferredInstallPrompt=null;updateInstallButton();return}if(isIOS){showToast('Safari: Deel-knop → Zet op beginscherm');return}showToast('Open het browsermenu → Installeren / Toevoegen aan beginscherm')}
+
+function renderSelectors(){
+ const el=document.getElementById('selectors');if(!el)return;
+ el.innerHTML=slots.map((s,i)=>{const ch=chars[s.char];return `<div class="sel ${s.joined?'joined':''}" data-slot="${i}"><div class="avatar">${s.joined?ch.emoji:'＋'}</div><div class="row"><b>Speler ${i+1}</b><span>${s.joined?ch.name:'Druk '+s.controls.jump.toUpperCase()}</span></div><div class="small">${s.joined?ch.abilityDesc:'Nog niet aangesloten'}</div>${s.joined?`<div class="charStrip">${chars.map((c,ci)=>`<button class="charMini ${ci===s.char?'active':''}" data-slot="${i}" data-char="${ci}" title="${c.name}">${c.emoji}</button>`).join('')}</div><div class="selectHint">${s.controls.left.toUpperCase()} / ${s.controls.right.toUpperCase()} = kiezen</div>`:''}</div>`}).join('');
+}
+function chooseCharacter(slotIdx,target){
+ const s=slots[slotIdx];if(!s||!s.joined)return;target=(target+chars.length)%chars.length;
+ const other=slots.findIndex((o,oi)=>oi!==slotIdx&&o.joined&&o.char===target);
+ if(other>=0){const old=s.char;s.char=target;slots[other].char=old;showToast(`${chars[target].name} geruild met speler ${other+1}`)}else s.char=target;
+ renderSelectors();
+}
+function menuKey(k){
+ if(state!=='menu')return;
+ controlSets.forEach((c,i)=>{if(k===c.jump&&!slots[i].joined){slots[i].joined=true;let free=chars.findIndex((_,ci)=>!slots.some((s,si)=>si!==i&&s.joined&&s.char===ci));slots[i].char=free>=0?free:i%chars.length;renderSelectors();showToast(`Speler ${i+1} doet mee`);return}
+   if(slots[i].joined&&k===c.left)chooseCharacter(i,slots[i].char-1);
+   if(slots[i].joined&&k===c.right)chooseCharacter(i,slots[i].char+1);
+ });
+ if(k==='enter')startGame();
+}
+
+function openMobileLobby(role){
+ if(!peerAvailable()){showToast('Online multiplayer kon niet laden');return}
+ cleanupPeer();mobileRole=role;mobileGameStarted=false;document.body.classList.add('mobileSession');state='mobileLobby';pendingProfile={name:'',char:role==='host'?0:1};
+ if(role==='host')showHostSetup();else showJoinSetup();
+}
+function peerAvailable(){return typeof window.Peer==='function'}
+function makeRoomCode(){const a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let out='';for(let i=0;i<5;i++)out+=a[Math.floor(Math.random()*a.length)];return out}
+function sanitizeName(v){return String(v||'').replace(/[<>]/g,'').trim().slice(0,16)}
+function publicLobby(){return networkPlayers.filter(p=>p.connected!==false).map(({id,slot,name,char,ready,host})=>({id,slot,name,char,ready,host}))}
+function localNetworkPlayer(){return networkPlayers.find(p=>p.id===localPlayerId)}
+function firstFreeNetworkChar(){for(let i=0;i<chars.length;i++)if(!networkPlayers.some(p=>p.connected!==false&&p.char===i))return i;return 0}
+function isCharTaken(ci,exceptId=null){return networkPlayers.some(p=>p.connected!==false&&p.id!==exceptId&&p.char===ci)}
+function profileCharButtons(selected,taken=[],allowTaken=false){return `<div class="mobileChars">${chars.map((c,i)=>{const busy=taken.includes(i)&&i!==selected;return `<button class="mobileChar ${selected===i?'active':''} ${busy?'taken':''}" data-profile-char="${i}" ${busy&&!allowTaken?'disabled':''}><span class="emoji">${c.emoji}</span><span class="nm">${c.name}</span></button>`}).join('')}</div>`;}
+function showHostSetup(){
+ panel.innerHTML=`<h1>Nieuwe <span>kamer</span></h1><div class="sub">Stel eerst jouw speler in.</div><div class="setupLabel">JOUW NAAM</div><input id="playerName" class="playerNameInput" maxlength="16" autocomplete="name" placeholder="Bijv. Gerard" value="${escapeHtml(pendingProfile.name)}"><div class="setupLabel">KIES JE CHARACTER</div>${profileCharButtons(pendingProfile.char)}<button class="go" id="createRoom">Kamer maken</button><button class="secondaryBtn" style="width:100%;margin-top:10px" id="cancelMobile">Terug</button><div class="joinHelp">De kamer heeft vier plekken. Andere spelers openen dezelfde game, vullen jouw kamercode in, voeren hun eigen naam in en kiezen een vrij character.</div>`;
+ const input=panel.querySelector('#playerName');input.addEventListener('input',()=>pendingProfile.name=sanitizeName(input.value));
+ panel.querySelectorAll('[data-profile-char]').forEach(b=>b.onclick=()=>{pendingProfile.name=sanitizeName(input.value);pendingProfile.char=Number(b.dataset.profileChar);showHostSetup();setTimeout(()=>panel.querySelector('#playerName')?.focus(),0)});
+ panel.querySelector('#createRoom').onclick=()=>{pendingProfile.name=sanitizeName(input.value);if(!pendingProfile.name){showToast('Vul eerst je naam in');input.focus();return}createMobileRoom()};
+ panel.querySelector('#cancelMobile').onclick=returnToMenu;
+}
+function showJoinSetup(){
+ panel.innerHTML=`<h1>Meedoen <span>📱</span></h1><div class="sub">Vul de kamercode in en stel jouw speler in.</div><div class="setupLabel">KAMERCODE</div><input id="roomInput" class="roomInput" maxlength="5" autocomplete="off" autocapitalize="characters" placeholder="ABCDE"><div class="setupLabel">JOUW NAAM</div><input id="playerName" class="playerNameInput" maxlength="16" autocomplete="name" placeholder="Bijv. Ailin" value="${escapeHtml(pendingProfile.name)}"><div class="setupLabel">KIES JE CHARACTER</div>${profileCharButtons(pendingProfile.char)}<button class="go" id="connectRoom">Inloggen in kamer</button><div class="connectionStatus" id="joinStatus"></div><button class="secondaryBtn" style="width:100%;margin-top:10px" id="cancelMobile">Terug</button>`;
+ const codeInput=panel.querySelector('#roomInput'),nameInput=panel.querySelector('#playerName');codeInput.value=roomCode||'';codeInput.addEventListener('input',()=>codeInput.value=codeInput.value.toUpperCase().replace(/[^A-Z2-9]/g,'').slice(0,5));nameInput.addEventListener('input',()=>pendingProfile.name=sanitizeName(nameInput.value));
+ panel.querySelectorAll('[data-profile-char]').forEach(b=>b.onclick=()=>{roomCode=codeInput.value;pendingProfile.name=sanitizeName(nameInput.value);pendingProfile.char=Number(b.dataset.profileChar);showJoinSetup()});
+ panel.querySelector('#connectRoom').onclick=()=>{roomCode=codeInput.value;pendingProfile.name=sanitizeName(nameInput.value);if(roomCode.length!==5){showToast('Vul de volledige kamercode in');codeInput.focus();return}if(!pendingProfile.name){showToast('Vul eerst je naam in');nameInput.focus();return}connectMobileRoom(roomCode)};
+ panel.querySelector('#cancelMobile').onclick=returnToMenu;
+}
+function escapeHtml(v){return String(v||'').replace(/[&<>'"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m]))}
+function createMobileRoom(){
+ roomCode=makeRoomCode();localPlayerId='p1';networkPlayers=[{id:'p1',slot:0,name:pendingProfile.name,char:pendingProfile.char,ready:false,host:true,connected:true}];renderHostLobby('Kamer openen…');
+ peer=new Peer('familiequest-'+roomCode.toLowerCase());
+ peer.on('open',()=>renderHostLobby('Kamer klaar · deel de code'));
+ peer.on('connection',conn=>setupHostConnection(conn));
+ peer.on('error',err=>{if(err&&err.type==='unavailable-id'){try{peer.destroy()}catch{}peer=null;createMobileRoom();return}renderHostLobby('Verbinding mislukt · probeer opnieuw')});
+}
+function lobbyCards(){
+ return `<div class="lobbyPlayers four">${[0,1,2,3].map(slot=>{const p=networkPlayers.find(x=>x.slot===slot&&x.connected!==false);if(!p)return `<div class="lobbyPlayer empty"><strong><span class="slotNo">${slot+1}</span>Vrije plek</strong><span>Wachten op speler…</span></div>`;const ch=chars[p.char];return `<div class="lobbyPlayer ${p.id===localPlayerId?'me':''}"><strong><span class="slotNo">${slot+1}</span>${escapeHtml(p.name)}</strong><span>${ch.emoji} ${ch.name}${p.host?' · host':''}</span><span class="readyBadge ${p.ready?'ready':''}">${p.ready?'✓ KLAAR':'○ NIET KLAAR'}</span></div>`}).join('')}</div>`;
+}
+function canStartNetworkGame(){const ps=publicLobby();return ps.length>=2&&ps.every(p=>p.ready)}
+function renderHostLobby(status='Kamer klaar'){
+ const me=localNetworkPlayer();if(!me)return;const taken=networkPlayers.filter(p=>p.id!==me.id).map(p=>p.char),canStart=canStartNetworkGame(),count=publicLobby().length;
+ panel.innerHTML=`<div class="lobbyTopline"><div><h1 style="font-size:clamp(32px,5vw,58px)">Familie <span>Lobby</span></h1><div class="sub" style="margin:4px 0 0">${escapeHtml(status)} · ${count}/4 spelers</div></div><div><div class="small">KAMERCODE</div><div class="roomMini">${roomCode}</div></div></div>${lobbyCards()}<div class="setupLabel">JOUW CHARACTER · ${escapeHtml(me.name)}</div>${profileCharButtons(me.char,taken)}<button class="secondaryBtn readyBtn ${me.ready?'ready':''}" style="width:100%;margin-top:4px" id="readyBtn">${me.ready?'✓ Jij bent klaar':'Ik ben klaar'}</button><button class="go" id="mobileStart" ${canStart?'':'disabled'}>${canStart?`Start met ${count} spelers`:count<2?'Wachten op andere spelers…':'Iedereen moet klaar zijn'}</button><button class="secondaryBtn" style="width:100%;margin-top:10px" id="cancelMobile">Kamer sluiten</button><div class="networkNote">Maximaal vier spelers. Iedere speler heeft zijn eigen telefoon en eigen touchbediening.</div>`;
+ panel.querySelectorAll('[data-profile-char]').forEach(b=>b.onclick=()=>setNetworkChar(Number(b.dataset.profileChar)));
+ panel.querySelector('#readyBtn').onclick=()=>setReady(!me.ready);panel.querySelector('#mobileStart').onclick=startMobileHostGame;panel.querySelector('#cancelMobile').onclick=returnToMenu;
+}
+function setupHostConnection(conn){
+ conn.on('open',()=>{
+   if(publicLobby().length>=4){conn.send({type:'roomFull'});setTimeout(()=>conn.close(),120);return}
+   hostConnections.set(conn.peer,conn);
+ });
+ conn.on('data',data=>handleHostPeerData(conn,data));
+ conn.on('close',()=>removeHostGuest(conn));
+ conn.on('error',()=>removeHostGuest(conn));
+}
+function removeHostGuest(conn){
+ hostConnections.delete(conn.peer);const p=networkPlayers.find(x=>x.peerId===conn.peer);if(p){clearSlotInput(p.slot);networkPlayers=networkPlayers.filter(x=>x.id!==p.id);if(state==='mobileLobby'){renderHostLobby(`${p.name} is weggegaan`);broadcastLobby()}}}
+function handleHostPeerData(conn,data){
+ if(!data||typeof data!=='object')return;
+ if(data.type==='hello'){
+   if(publicLobby().length>=4){conn.send({type:'roomFull'});conn.close();return}
+   if(networkPlayers.some(p=>p.peerId===conn.peer))return;
+   const usedSlots=networkPlayers.map(p=>p.slot),slot=[1,2,3].find(i=>!usedSlots.includes(i));if(slot==null){conn.send({type:'roomFull'});return}
+   const id='p'+(slot+1),name=sanitizeName(data.name)||`Speler ${slot+1}`,wanted=Number.isInteger(data.char)?clamp(data.char,0,3):slot,char=isCharTaken(wanted)?firstFreeNetworkChar():wanted;
+   networkPlayers.push({id,slot,name,char,ready:false,host:false,connected:true,peerId:conn.peer});conn.send({type:'welcome',playerId:id,players:publicLobby(),roomCode});broadcastLobby();renderHostLobby(`${name} is verbonden ✓`);return;
+ }
+ const p=networkPlayers.find(x=>x.peerId===conn.peer);if(!p)return;
+ if(data.type==='profile'){
+   if(typeof data.name==='string')p.name=sanitizeName(data.name)||p.name;
+   if(Number.isInteger(data.char)&&data.char>=0&&data.char<chars.length&&!isCharTaken(data.char,p.id)){p.char=data.char;p.ready=false}else if(Number.isInteger(data.char)&&isCharTaken(data.char,p.id)){conn.send({type:'toast',text:'Dit character is al gekozen'})}
+   broadcastLobby();renderHostLobby('Lobby bijgewerkt');
+ }else if(data.type==='ready'){p.ready=!!data.ready;broadcastLobby();renderHostLobby(p.ready?`${p.name} is klaar`:`${p.name} is nog niet klaar`)}
+ else if(data.type==='input')applyRemoteInputForSlot(p.slot,data.input||{});
+}
+function broadcastLobby(){const packet={type:'lobby',players:publicLobby(),roomCode};for(const conn of hostConnections.values())if(conn.open)conn.send(packet)}
+function connectMobileRoom(code){
+ roomCode=(code||'').trim().toUpperCase();panel.innerHTML=`<h1>Verbinden<span>…</span></h1><div class="sub">${escapeHtml(pendingProfile.name)}, je wordt toegevoegd aan kamer ${roomCode}.</div><div class="connectionStatus">Kamer zoeken…</div><button class="secondaryBtn" style="width:100%;margin-top:10px" id="cancelMobile">Annuleren</button>`;panel.querySelector('#cancelMobile').onclick=returnToMenu;
+ peer=new Peer();peer.on('open',()=>{peerConn=peer.connect('familiequest-'+roomCode.toLowerCase(),{reliable:true});setupGuestConnection(peerConn)});peer.on('error',()=>{panel.querySelector('.connectionStatus').textContent='Kamer niet gevonden of verbinding mislukt.'});
+}
+function setupGuestConnection(conn){
+ conn.on('open',()=>conn.send({type:'hello',name:pendingProfile.name,char:pendingProfile.char}));
+ con
