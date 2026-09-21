@@ -1,0 +1,17 @@
+{
+  "name": "Familie Quest – De Sterrenjacht",
+  "short_name": "Familie Quest",
+  "description": "Een originele online co-op familieplatformgame voor maximaal 4 spelers, met Kaylee, Gerard, Ailin en Louis.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#08111c",
+  "theme_color": "#08111c",
+  "icons": [{
+    "src": "icons/icon.svg",
+    "sizes": "any",
+    "type": "image/svg+xml",
+    "purpose": "any maskable"
+  }]
+}
