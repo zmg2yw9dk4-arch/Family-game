@@ -142,6 +142,7 @@ function firstFreeNetworkChar(exceptId=null){for(let i=0;i<chars.length;i++)if(!
 function isCharTaken(charIndex,exceptId=null){return networkPlayers.some(p=>p.id!==exceptId&&p.connected!==false&&p.char===charIndex)}
 function clearSlotInput(slotIndex){const c=controlSets[slotIndex];if(!c)return;keys[c.left]=keys[c.right]=keys[c.jump]=false;remoteInputStates[slotIndex]={left:false,right:false,jump:false}}
 function cleanupPeer(){
+ if(touchHeartbeat){clearInterval(touchHeartbeat);touchHeartbeat=null}
  for(const conn of hostConnections.values()){try{conn.close()}catch{}}hostConnections.clear();
  try{peerConn&&peerConn.close()}catch{}try{peer&&peer.destroy()}catch{}peerConn=null;peer=null;networkPlayers=[];localPlayerId=null;remoteInputStates={};
 }
@@ -261,12 +262,37 @@ function beginMobileGameCore(role,players){
 function updateTouchUI(){
  const active=!!mobileRole&&mobileGameStarted&&state==='play';touchControls.style.display=active?'block':'none';if(!active)return;const me=localNetworkPlayer();if(!me)return;const ch=chars[slots[me.slot].char];touchRole.textContent=`${ch.emoji} ${ch.name} · ${me.name}`;
 }
+let touchHeartbeat=null;
+function sendGuestTouchState(){
+ if(mobileRole==='guest'&&peerConn&&peerConn.open)peerConn.send({type:'input',input:{left:!!touchState.left,right:!!touchState.right,jump:!!touchState.jump}});
+}
+function refreshTouchHeartbeat(){
+ const active=touchState.left||touchState.right||touchState.jump;
+ if(active&&mobileRole==='guest'&&!touchHeartbeat){touchHeartbeat=setInterval(sendGuestTouchState,100)}
+ else if(!active&&touchHeartbeat){clearInterval(touchHeartbeat);touchHeartbeat=null}
+}
 function setTouchInput(name,on){
- if(!mobileRole||!mobileGameStarted)return;touchState[name]=on;document.querySelectorAll(`[data-touch="${name}"]`).forEach(b=>b.classList.toggle('active',on));const me=localNetworkPlayer();if(!me)return;
- if(mobileRole==='host'){const c=controlSets[me.slot],k=name==='left'?c.left:name==='right'?c.right:c.jump;if(on&&!keys[k])pressed[k]=true;keys[k]=on}else if(peerConn&&peerConn.open)peerConn.send({type:'input',input:{...touchState}})
+ if(!mobileRole||!mobileGameStarted)return;
+ touchState[name]=on;
+ document.querySelectorAll(`[data-touch="${name}"]`).forEach(b=>b.classList.toggle('active',on));
+ const me=localNetworkPlayer();if(!me)return;
+ if(mobileRole==='host'){
+   const ctrl=controlSets[me.slot],k=name==='left'?ctrl.left:name==='right'?ctrl.right:ctrl.jump;
+   if(on&&!keys[k])pressed[k]=true;
+   keys[k]=on;
+ }else{
+   sendGuestTouchState();
+   refreshTouchHeartbeat();
+ }
 }
 function applyRemoteInputForSlot(slotIndex,input){
- const c=controlSets[slotIndex];if(!c)return;const prev=remoteInputStates[slotIndex]||{left:false,right:false,jump:false};for(const name of ['left','right','jump']){const k=name==='left'?c.left:name==='right'?c.right:c.jump,on=!!input[name];if(on&&!prev[name])pressed[k]=true;keys[k]=on;prev[name]=on}remoteInputStates[slotIndex]=prev;
+ const c=controlSets[slotIndex];if(!c)return;
+ remoteInputStates[slotIndex]={
+   left:!!input.left,
+   right:!!input.right,
+   jump:!!input.jump,
+   updatedAt:Date.now()
+ };
 }
 function snapshotPlayer(p){return {slot:p.slot,x:p.x,y:p.y,vx:p.vx,vy:p.vy,onGround:p.onGround,hearts:p.hearts,inv:p.inv,respawnX:p.respawnX,respawnY:p.respawnY,finished:p.finished,facing:p.facing,floatFuel:p.floatFuel,runCycle:p.runCycle,landSquash:p.landSquash,abilityFlash:p.abilityFlash,dashReady:p.dashReady,groundPound:p.groundPound,airJumps:p.airJumps,jumpHeld:p.jumpHeld}}
 function sendSnapshot(force=false){
@@ -390,11 +416,18 @@ function gerardShockwave(p){
 }
 function updatePlayer(p){
  const c=p.controls,ch=p.char;
+ const localNet=localNetworkPlayer();
+ const remoteControlled=mobileRole==='host'&&localNet&&p.slot!==localNet.slot&&networkPlayers.some(np=>np.slot===p.slot&&np.connected!==false);
+ const remote=remoteControlled?(remoteInputStates[p.slot]||{left:false,right:false,jump:false}):null;
+ const leftDown=remoteControlled?!!remote.left:!!keys[c.left];
+ const rightDown=remoteControlled?!!remote.right:!!keys[c.right];
+ const jumpDown=remoteControlled?!!remote.jump:!!keys[c.jump];
+ const jumpPressed=remoteControlled?(jumpDown&&!p._remoteJumpPrev):consume(c.jump);
+ p._remoteJumpPrev=jumpDown;
  p.wasGrounded=p.onGround;
  if(p.onGround)p.coyote=7;else p.coyote=Math.max(0,p.coyote-1);
- const jumpPressed=consume(c.jump);
  if(jumpPressed)p.jumpBuffer=7;else p.jumpBuffer=Math.max(0,p.jumpBuffer-1);
- const dir=(keys[c.right]?1:0)-(keys[c.left]?1:0);
+ const dir=(rightDown?1:0)-(leftDown?1:0);
  const accel=p.onGround?ch.accel:ch.airAccel;
  p.vx += dir*accel;
  if(!dir)p.vx*=p.onGround?ch.friction:.985;else if(p.onGround)p.vx*=.965;
@@ -408,11 +441,11 @@ function updatePlayer(p){
    else if(ch.airDash&&p.dashReady){doAilinDash(p);p.jumpBuffer=0;}
  }
 
- if(!keys[c.jump] && p.vy<0 && p.jumpHeld){p.vy*=ch.jumpCut;p.jumpHeld=false;}
- if(ch.float && keys[c.jump] && p.vy>0 && p.floatFuel>0){p.vy=Math.max(p.vy-.72,1.15);p.floatFuel=Math.max(0,p.floatFuel-1.0);if(frame%7===0)burst(p.x+19,p.y+32,'#c8f2ff',1,'bubble');}
- if(p.onGround && !keys[c.jump])p.floatFuel=Math.min(100,p.floatFuel+2.35);
+ if(!jumpDown && p.vy<0 && p.jumpHeld){p.vy*=ch.jumpCut;p.jumpHeld=false;}
+ if(ch.float && jumpDown && p.vy>0 && p.floatFuel>0){p.vy=Math.max(p.vy-.72,1.15);p.floatFuel=Math.max(0,p.floatFuel-1.0);if(frame%7===0)burst(p.x+19,p.y+32,'#c8f2ff',1,'bubble');}
+ if(p.onGround && !jumpDown)p.floatFuel=Math.min(100,p.floatFuel+2.35);
 
- let grav=GRAV*ch.gravity*(p.groundPound?1.5:1)*(keys[c.jump]&&p.vy<0&&p.jumpHeld?.58:1);
+ let grav=GRAV*ch.gravity*(p.groundPound?1.5:1)*(jumpDown&&p.vy<0&&p.jumpHeld?.58:1);
  p.vy=Math.min(ch.name==='Gerard'?18:MAX_FALL,p.vy+grav);
  const prevY=p.y;
  p.x+=p.vx;resolveX(p);
