@@ -1,0 +1,66 @@
+de8);color:#fff;display:grid;place-items:center;font:1000 34px system-ui;box-shadow:0 10px 32px #0008,inset 0 1px #ffffff58;backdrop-filter:blur(10px);-webkit-tap-highlight-color:transparent}.touchBtn.jump{width:98px;height:98px;background:radial-gradient(circle at 35% 28%,#a8ffd966,#0f493be8 55%,#061912f2);font-size:25px}.touchBtn.active{transform:scale(.93);filter:brightness(1.35);box-shadow:0 5px 18px #0008,inset 0 0 24px #68f5b155}.touchRole{position:absolute;top:max(64px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);font:900 12px system-ui;color:#fff;background:#04111bcc;border:1px solid #ffffff24;padding:7px 11px;border-radius:999px;pointer-events:none;white-space:nowrap}
+  #rotateHint{position:absolute;inset:0;z-index:60;background:#07111cf4;display:none;place-items:center;text-align:center;padding:30px}.rotateBox{max-width:360px}.rotateIcon{font-size:64px}.rotateTitle{font-size:26px;font-weight:1000;margin:10px 0}.rotateText{color:var(--muted);line-height:1.5}
+  @media(max-width:800px){.controls,#selectors{grid-template-columns:repeat(2,1fr)}#panel{padding:20px}.mobileActions{grid-template-columns:1fr}canvas{border-radius:0}#hud{inset:8px 8px auto 8px}.pill{padding:7px 10px;font-size:12px}.touchBtn{width:74px;height:74px}.touchBtn.jump{width:88px;height:88px}}
+  @media(max-width:900px) and (orientation:portrait){body.mobileSession #rotateHint{display:grid}}
+
+  .playerNameInput{width:100%;font:800 18px/1.2 system-ui;color:#fff;background:#020a12;border:1px solid #ffffff2b;border-radius:14px;padding:14px 15px;outline:none;margin:8px 0 4px}.playerNameInput:focus{border-color:var(--mint);box-shadow:0 0 0 3px #68f5b11d}.setupLabel{font-size:12px;font-weight:900;color:#dcecff;margin-top:10px}.lobbyPlayers.four{grid-template-columns:repeat(4,1fr)}.lobbyPlayer.me{border-color:var(--mint);box-shadow:0 0 0 2px #68f5b116 inset}.lobbyPlayer.empty{opacity:.48}.readyBadge{display:inline-flex!important;width:auto;align-items:center;margin-top:7px;padding:4px 7px;border-radius:999px;background:#ffffff0d;border:1px solid #ffffff18;color:#b9cada!important;font-size:10px!important;font-weight:900}.readyBadge.ready{color:#bfffe2!important;background:#68f5b112;border-color:#68f5b13f}.mobileChar:disabled{cursor:not-allowed}.slotNo{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:8px;background:#ffffff10;margin-right:5px;font-size:11px}.lobbyTopline{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.roomMini{font-weight:1000;color:var(--mint);letter-spacing:.12em}.readyBtn.ready{background:linear-gradient(180deg,#8bffd0,#4ee4a4);color:#062017;border-color:#d7ffed}.joinHelp{padding:10px 12px;border-radius:13px;background:#ffffff08;border:1px solid #ffffff14;color:var(--muted);font-size:12px;line-height:1.45;margin-top:10px}
+  @media(max-width:800px){.lobbyPlayers.four{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+  <div id="hud" style="display:none"><div class="pill" id="levelHud"></div><div class="pill" id="scoreHud"></div></div>
+  <div id="overlay"><div id="panel"></div></div>
+  <div id="toast"></div>
+  <div id="touchControls">
+    <div class="touchRole" id="touchRole"></div>
+    <div class="touchCluster left"><button class="touchBtn" data-touch="left" aria-label="Links">◀</button><button class="touchBtn" data-touch="right" aria-label="Rechts">▶</button></div>
+    <div class="touchCluster right"><button class="touchBtn jump" data-touch="jump" aria-label="Springen of speciale actie">SPRING</button></div>
+  </div>
+  <div id="rotateHint"><div class="rotateBox"><div class="rotateIcon">📱↻</div><div class="rotateTitle">Draai je telefoon</div><div class="rotateText">Familie Quest speelt het fijnst liggend. Draai je telefoon naar landscape om verder te spelen.</div></div></div>
+</div>
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script>
+(() => {
+'use strict';
+const C=document.getElementById('game'),ctx=C.getContext('2d');
+const overlay=document.getElementById('overlay'),panel=document.getElementById('panel'),hud=document.getElementById('hud'),levelHud=document.getElementById('levelHud'),scoreHud=document.getElementById('scoreHud'),toast=document.getElementById('toast');
+const touchControls=document.getElementById('touchControls'),touchRole=document.getElementById('touchRole');
+const W=C.width,H=C.height,GRAV=0.78,MAX_FALL=16;
+let state='menu', levelIndex=0, cameraX=0, score=0, stars=0, last=0, paused=false, frame=0, cameraShake=0, accumulator=0;
+let platforms=[],enemies=[],pickups=[],checkpoints=[],goal=null,particles=[],floatTexts=[];
+const keys={}, pressed={};
+let mobileRole=null, peer=null, peerConn=null, roomCode='', mobileGameStarted=false, remoteSnapshotLevel=-1, lastNetSend=0;
+let hostConnections=new Map(), networkPlayers=[], localPlayerId=null, pendingProfile={name:'',char:0}, remoteInputStates={};
+const touchState={left:false,right:false,jump:false};
+
+
+const chars=[
+ {name:'Kaylee',color:'#ff7ecb',accent:'#ffe4f5',emoji:'🌸',speed:5.2,accel:1.02,airAccel:.72,friction:.78,gravity:.70,jump:14.25,jumpCut:.53,ability:'Bloemensprong',abilityDesc:'Dubbele sprong + zachte luchtcontrole',double:true},
+ {name:'Gerard',color:'#57e8ae',accent:'#d8fff0',emoji:'🧢',speed:4.75,accel:.92,airAccel:.52,friction:.73,gravity:.91,jump:13.45,jumpCut:.58,ability:'Krachtstomp',abilityDesc:'Zwaar, stabiel en een schokgolf-stomp',groundPound:true,stompRadius:118},
+ {name:'Ailin',color:'#b99cff',accent:'#efe8ff',emoji:'✨',speed:6.35,accel:1.22,airAccel:.90,friction:.82,gravity:.77,jump:14.05,jumpCut:.50,ability:'Sterrendash',abilityDesc:'Snelste renner + één luchtdash per sprong',airDash:true},
+ {name:'Louis',color:'#70c8ff',accent:'#e4f6ff',emoji:'🫧',speed:4.45,accel:.78,airAccel:.60,friction:.80,gravity:.62,jump:12.65,jumpCut:.56,ability:'Bubbelvlucht',abilityDesc:'Houd springen vast om te zweven + bubbelvangnet',float:true,bubbleShield:true}
+];
+const controlSets=[
+ {left:'a',right:'d',jump:'w',label:'A / D / W'},
+ {left:'arrowleft',right:'arrowright',jump:'arrowup',label:'← / → / ↑'},
+ {left:'j',right:'l',jump:'i',label:'J / L / I'},
+ {left:'f',right:'h',jump:'t',label:'F / H / T'}
+];
+const slots=controlSets.map((c,i)=>({joined:false,char:i,controls:c,player:null}));
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function rand(a,b){return a+Math.random()*(b-a)}
+function keyName(e){
+ const codeMap={KeyA:'a',KeyD:'d',KeyW:'w',KeyJ:'j',KeyL:'l',KeyI:'i',KeyF:'f',KeyH:'h',KeyT:'t',KeyP:'p',KeyR:'r',Enter:'enter',ArrowLeft:'arrowleft',ArrowRight:'arrowright',ArrowUp:'arrowup',ArrowDown:'arrowdown',Space:' '};
+ return codeMap[e.code] || (e.key||'').toLowerCase();
+}
+addEventListener('keydown',e=>{const k=keyName(e); const fresh=!keys[k]; if(fresh)pressed[k]=true; keys[k]=true; if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault(); if(fresh)menuKey(k); if(state==='play'&&fresh){if(k==='p')paused=!paused;if(k==='r')restartLevel();}});
+addEventListener('keyup',e=>{keys[keyName(e)]=false});
+function consume(k){const v=pressed[k];pressed[k]=false;return v}
+
+function showToast(t){toast.textContent=t;toast.style.opacity=1;clearTimeout(showToast.t);showToast.t=setTimeout(()=>toast.style.opacity=0,1400)}
+
+function menuHTML(){
+ panel.innerHTML=`<h1>Familie Quest<br><span>De Sterrenjacht</span></h1><div class="sub">Speel lokaal op één toetsenbord óf speel online met maximaal v
