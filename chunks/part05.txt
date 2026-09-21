@@ -1,0 +1,55 @@
+n.on('data',data=>handlePeerData(data));
+ conn.on('close',()=>{showToast('Verbinding met de host verbroken');if(state==='mobileLobby')returnToMenu()});
+ conn.on('error',()=>showToast('Netwerkfout'));
+}
+function renderGuestLobby(status='Verbonden'){
+ const me=localNetworkPlayer();if(!me)return;const taken=networkPlayers.filter(p=>p.id!==me.id).map(p=>p.char);
+ panel.innerHTML=`<div class="lobbyTopline"><div><h1 style="font-size:clamp(32px,5vw,58px)">Familie <span>Lobby</span></h1><div class="sub" style="margin:4px 0 0">${escapeHtml(status)} · ${publicLobby().length}/4 spelers</div></div><div><div class="small">KAMERCODE</div><div class="roomMini">${roomCode}</div></div></div>${lobbyCards()}<div class="setupLabel">JOUW CHARACTER · ${escapeHtml(me.name)}</div>${profileCharButtons(me.char,taken)}<button class="secondaryBtn readyBtn ${me.ready?'ready':''}" style="width:100%;margin-top:4px" id="readyBtn">${me.ready?'✓ Jij bent klaar':'Ik ben klaar'}</button><div class="go" style="text-align:center;opacity:.62">Wachten tot de host start…</div><button class="secondaryBtn" style="width:100%;margin-top:10px" id="cancelMobile">Verbinding stoppen</button>`;
+ panel.querySelectorAll('[data-profile-char]').forEach(b=>b.onclick=()=>setNetworkChar(Number(b.dataset.profileChar)));panel.querySelector('#readyBtn').onclick=()=>setReady(!me.ready);panel.querySelector('#cancelMobile').onclick=returnToMenu;
+}
+function setNetworkChar(target){
+ const me=localNetworkPlayer();if(!me||isCharTaken(target,me.id)){showToast('Dit character is al gekozen');return}if(me.char===target)return;me.char=target;me.ready=false;
+ if(mobileRole==='host'){broadcastLobby();renderHostLobby('Character gewijzigd')}else if(peerConn&&peerConn.open){peerConn.send({type:'profile',char:target}) ;renderGuestLobby('Character gewijzigd')}
+}
+function setReady(value){const me=localNetworkPlayer();if(!me)return;me.ready=!!value;if(mobileRole==='host'){broadcastLobby();renderHostLobby(me.ready?'Jij bent klaar ✓':'Klaarstatus aangepast')}else if(peerConn&&peerConn.open){peerConn.send({type:'ready',ready:me.ready});renderGuestLobby(me.ready?'Jij bent klaar ✓':'Klaarstatus aangepast')}}
+function returnToMenu(){cleanupPeer();document.body.classList.remove('mobileSession');mobileRole=null;mobileGameStarted=false;touchControls.style.display='none';state='menu';menuHTML()}
+function handlePeerData(data){
+ if(!data||typeof data!=='object'||mobileRole!=='guest')return;
+ if(data.type==='roomFull'){panel.innerHTML=`<h1>Kamer <span>vol</span></h1><div class="sub">Er zijn al vier spelers verbonden.</div><button class="go" id="backJoin">Terug</button>`;panel.querySelector('#backJoin').onclick=()=>{cleanupPeer();mobileRole='guest';showJoinSetup()};return}
+ if(data.type==='welcome'){localPlayerId=data.playerId;networkPlayers=(data.players||[]).map(p=>({...p,connected:true}));roomCode=data.roomCode||roomCode;renderGuestLobby('Verbonden ✓');}
+ else if(data.type==='lobby'){networkPlayers=(data.players||[]).map(p=>({...p,connected:true}));roomCode=data.roomCode||roomCode;if(state==='mobileLobby')renderGuestLobby('Verbonden ✓ · wachten op host');}
+ else if(data.type==='start'){networkPlayers=(data.players||networkPlayers).map(p=>({...p,connected:true}));beginMobileGuestGame(data);}
+ else if(data.type==='snapshot')applyRemoteSnapshot(data);
+ else if(data.type==='win'){stars=data.stars;score=data.score;showWin();}
+ else if(data.type==='toast')showToast(data.text||'');
+}
+function startMobileHostGame(){
+ const ps=publicLobby();if(!canStartNetworkGame()){showToast(ps.length<2?'Er moet minimaal nog één speler meedoen':'Nog niet iedereen is klaar');return}
+ beginMobileGameCore('host',ps);const packet={type:'start',players:ps,levelIndex:0,score:0,stars:0};for(const conn of hostConnections.values())if(conn.open)conn.send(packet);sendSnapshot(true);
+}
+function beginMobileGuestGame(data){levelIndex=data.levelIndex||0;score=data.score||0;stars=data.stars||0;beginMobileGameCore('guest',data.players||networkPlayers)}
+function beginMobileGameCore(role,players){
+ mobileRole=role;mobileGameStarted=true;state='play';overlay.style.display='none';hud.style.display='flex';paused=false;remoteSnapshotLevel=-1;networkPlayers=(players||networkPlayers).map(p=>({...p,connected:true}));
+ slots.forEach(s=>{s.joined=false;s.player=null;s.networkName=''});for(const np of networkPlayers){const s=slots[np.slot];if(!s)continue;s.joined=true;s.char=np.char;s.networkName=np.name}
+ if(role==='host'){score=0;stars=0;levelIndex=0}loadLevel(true);updateTouchUI();
+}
+function updateTouchUI(){
+ const active=!!mobileRole&&mobileGameStarted&&state==='play';touchControls.style.display=active?'block':'none';if(!active)return;const me=localNetworkPlayer();if(!me)return;const ch=chars[slots[me.slot].char];touchRole.textContent=`${ch.emoji} ${ch.name} · ${me.name}`;
+}
+function setTouchInput(name,on){
+ if(!mobileRole||!mobileGameStarted)return;touchState[name]=on;document.querySelectorAll(`[data-touch="${name}"]`).forEach(b=>b.classList.toggle('active',on));const me=localNetworkPlayer();if(!me)return;
+ if(mobileRole==='host'){const c=controlSets[me.slot],k=name==='left'?c.left:name==='right'?c.right:c.jump;if(on&&!keys[k])pressed[k]=true;keys[k]=on}else if(peerConn&&peerConn.open)peerConn.send({type:'input',input:{...touchState}})
+}
+function applyRemoteInputForSlot(slotIndex,input){
+ const c=controlSets[slotIndex];if(!c)return;const prev=remoteInputStates[slotIndex]||{left:false,right:false,jump:false};for(const name of ['left','right','jump']){const k=name==='left'?c.left:name==='right'?c.right:c.jump,on=!!input[name];if(on&&!prev[name])pressed[k]=true;keys[k]=on;prev[name]=on}remoteInputStates[slotIndex]=prev;
+}
+function snapshotPlayer(p){return {slot:p.slot,x:p.x,y:p.y,vx:p.vx,vy:p.vy,onGround:p.onGround,hearts:p.hearts,inv:p.inv,respawnX:p.respawnX,respawnY:p.respawnY,finished:p.finished,facing:p.facing,floatFuel:p.floatFuel,runCycle:p.runCycle,landSquash:p.landSquash,abilityFlash:p.abilityFlash,dashReady:p.dashReady,groundPound:p.groundPound,airJumps:p.airJumps,jumpHeld:p.jumpHeld}}
+function sendSnapshot(force=false){
+ if(mobileRole!=='host'||hostConnections.size===0)return;if(!force&&frame-lastNetSend<3)return;lastNetSend=frame;const packet={type:'snapshot',state,levelIndex,score,stars,cameraX,paused,players:activePlayers().map(snapshotPlayer),enemies:enemies.map(e=>({x:e.x,vx:e.vx,alive:e.alive,phase:e.phase,squash:e.squash})),pickups:pickups.map(p=>p.got),checkpoints:checkpoints.map(c=>c.active)};for(const conn of hostConnections.values())if(conn.open)conn.send(packet);
+}
+function applyRemoteSnapshot(snap){
+ if(!mobileGameStarted)return;if(snap.levelIndex!==levelIndex||remoteSnapshotLevel!==snap.levelIndex){levelIndex=snap.levelIndex;loadLevel(true);remoteSnapshotLevel=snap.levelIndex}state=snap.state==='win'?'play':snap.state;score=snap.score;stars=snap.stars;cameraX=snap.cameraX;paused=!!snap.paused;updateHud();
+ (snap.players||[]).forEach(sp=>{const slot=slots[sp.slot];if(slot&&slot.player)Object.assign(slot.player,sp)});(snap.enemies||[]).forEach((se,i)=>{if(enemies[i])Object.assign(enemies[i],se)});(snap.pickups||[]).forEach((got,i)=>{if(pickups[i])pickups[i].got=got});(snap.checkpoints||[]).forEach((a,i)=>{if(checkpoints[i])checkpoints[i].active=a});updateTouchUI();
+}
+function bindTouchControls(){
+ document.querySelectorAll('.touchBtn').forEach(btn=>{const name=btn.dataset.touch;const down=e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId)}catch{}setTouchInput(name
